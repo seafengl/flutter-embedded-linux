@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install libraries
+      run: |
+        sudo apt update
+        sudo apt install libgles2-mesa-dev libegl1-mesa-dev libxkbcommon-dev libwayland-dev libdrm-dev libgbm-dev libinput-dev libudev-dev libsystemd-dev wayland-protocols libx11-dev
+
+    - name: Download Flutter Engine library
+      run: |
+        curl -L https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download/elinux-x64-release.zip > elinux-x64-release.zip
+        unzip elinux-x64-release.zip
+
+    - name: Build wayland client
+      run: |
+        cmake -E make_directory build/wayland
+        cp libflutter_engine.so build/wayland/
+        cmake -S . -B build/wayland -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-wayland-client
+        cmake --build build/wayland --config $BUILD_TYPE
+
+    - name: Build drm backend with GBM
+      run: |
+        cmake -E make_directory build/drm-gbm
+        cp libflutter_engine.so build/drm-gbm/
+        cmake -S . -B build/drm-gbm -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-drm-gbm-backend
+        cmake --build build/drm-gbm --config $BUILD_TYPE
+
+    - name: Build drm backend with EGLStream
+      run: |
+        cmake -E make_directory build/drm-eglstream
+        cp libflutter_engine.so build/drm-eglstream/
+        cmake -S . -B build/drm-eglstream -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-drm-eglstream-backend
+        cmake --build build/drm-eglstream --config $BUILD_TYPE
+
+    - name: Build x11 client
+      run: |
+        cmake -E make_directory build/x11
+        cp libflutter_engine.so build/x11/
+        cmake -S . -B build/x11 -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-x11-client
+        cmake --build build/x11 --config $BUILD_TYPE
+
+    - name: Build libflutter_elinux.so
+      run: |
+        cmake -E make_directory build/elinux-so
+        cp libflutter_engine.so build/elinux-so/
+        cmake -S . -B build/elinux-so -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DBUILD_ELINUX_SO=ON -DBACKEND_TYPE=WAYLAND
+        cmake --build build/elinux-so --config $BUILD_TYPE
+
+    - name: Collect artifacts
+      run: |
+        mkdir -p artifacts
+        cp build/wayland/flutter-client artifacts/
+        cp build/drm-gbm/flutter-drm-gbm-backend artifacts/
+        cp build/drm-eglstream/flutter-drm-eglstream-backend artifacts/
+        cp build/x11/flutter-x11 artifacts/
+        cp build/elinux-so/libflutter_elinux_wayland.so artifacts/
+        cp libflutter_engine.so artifacts/
+        ls -lh artifacts/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: elinux-build-${{ github.ref_name }}
+        path: artifacts/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/*
+        generate_release_notes: true
