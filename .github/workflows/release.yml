@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
@@ -20,15 +20,19 @@ jobs:
     - name: Install build dependencies (x64 + arm64 cross)
       run: |
         sudo dpkg --add-architecture arm64
-        # Add arm64 ports repository (Ubuntu 20.04 Focal)
+        # Add arm64 ports repository (Ubuntu 24.04 Noble)
         sudo tee /etc/apt/sources.list.d/arm64-ports.list <<'EOF'
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-backports main restricted universe multiverse
+        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-backports main restricted universe multiverse
         EOF
-        # Restrict existing amd64 sources to avoid arm64 fetch errors
-        sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+        # Restrict existing amd64 sources (deb822 format on Ubuntu 24.04)
+        if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+          sudo sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        else
+          sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+        fi
         sudo apt-get update
         sudo apt-get install -y \
           build-essential clang cmake curl git pkgconf zip \
