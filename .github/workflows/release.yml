@@ -4,107 +4,64 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install build dependencies (x64 + arm64 cross)
+    - name: Install build dependencies
       run: |
-        sudo dpkg --add-architecture arm64
-        # Add arm64 ports repository (Ubuntu 24.04 Noble)
-        sudo tee /etc/apt/sources.list.d/arm64-ports.list <<'EOF'
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-backports main restricted universe multiverse
-        EOF
-        # Restrict existing amd64 sources (deb822 format on Ubuntu 24.04)
-        if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-          sudo sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
-        else
-          sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
-        fi
         sudo apt-get update
         sudo apt-get install -y \
           build-essential clang cmake curl git pkgconf zip \
           libgles2-mesa-dev libegl1-mesa-dev libxkbcommon-dev libwayland-dev \
           libdrm-dev libgbm-dev libinput-dev libudev-dev libsystemd-dev \
-          wayland-protocols libx11-dev \
-          crossbuild-essential-arm64 \
-          libgles2-mesa-dev:arm64 libegl1-mesa-dev:arm64 libxkbcommon-dev:arm64 \
-          libwayland-dev:arm64 libdrm-dev:arm64 libgbm-dev:arm64 libinput-dev:arm64 \
-          libudev-dev:arm64 libsystemd-dev:arm64 wayland-protocols:arm64
+          wayland-protocols libx11-dev
 
-    - name: Download Flutter Engine (x64 + arm64, debug + release)
+    - name: Download Flutter Engine (arm64, debug + release)
       run: |
         BASE_URL=https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download
-        for pkg in elinux-x64-release elinux-x64-debug elinux-arm64-release elinux-arm64-debug; do
+        for pkg in elinux-arm64-release elinux-arm64-debug; do
           curl -L ${BASE_URL}/${pkg}.zip > ${pkg}.zip
           unzip ${pkg}.zip -d engine-${pkg}
         done
         mkdir -p build
         ls -lh engine-*/
 
-    - name: Build x64 embedder .so (release mode)
-      run: |
-        cp engine-elinux-x64-release/libflutter_engine.so build/
-        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
-          BT="${backend%%:*}"; DIR="${backend##*:}"
-          cmake -S . -B build/x64-rel-${DIR} \
-            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
-            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=ON -DENABLE_ELINUX_EMBEDDER_LOG=OFF
-          cmake --build build/x64-rel-${DIR} --config ${BUILD_TYPE}
-        done
-
-    - name: Build x64 embedder .so (debug mode)
-      run: |
-        cp engine-elinux-x64-debug/libflutter_engine.so build/
-        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
-          BT="${backend%%:*}"; DIR="${backend##*:}"
-          cmake -S . -B build/x64-dbg-${DIR} \
-            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
-            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=OFF -DENABLE_ELINUX_EMBEDDER_LOG=ON
-          cmake --build build/x64-dbg-${DIR} --config ${BUILD_TYPE}
-        done
-
     - name: Build arm64 embedder .so (release mode)
       run: |
         cp engine-elinux-arm64-release/libflutter_engine.so build/
-        TOOLCHAIN=${{ github.workspace }}/release/cross-toolchain-aarch64.cmake
         for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
           BT="${backend%%:*}"; DIR="${backend##*:}"
           cmake -S . -B build/arm64-rel-${DIR} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
-            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=ON -DENABLE_ELINUX_EMBEDDER_LOG=OFF \
-            -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=ON -DENABLE_ELINUX_EMBEDDER_LOG=OFF
           cmake --build build/arm64-rel-${DIR} --config ${BUILD_TYPE}
         done
 
     - name: Build arm64 embedder .so (debug mode)
       run: |
         cp engine-elinux-arm64-debug/libflutter_engine.so build/
-        TOOLCHAIN=${{ github.workspace }}/release/cross-toolchain-aarch64.cmake
         for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
           BT="${backend%%:*}"; DIR="${backend##*:}"
           cmake -S . -B build/arm64-dbg-${DIR} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
-            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=OFF -DENABLE_ELINUX_EMBEDDER_LOG=ON \
-            -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=OFF -DENABLE_ELINUX_EMBEDDER_LOG=ON
           cmake --build build/arm64-dbg-${DIR} --config ${BUILD_TYPE}
         done
 
-    - name: Build example clients (x64)
+    - name: Build example clients (arm64)
       run: |
-        cp engine-elinux-x64-release/libflutter_engine.so build/
+        cp engine-elinux-arm64-release/libflutter_engine.so build/
         for example in \
           "flutter-wayland-client:wayland-client" \
           "flutter-x11-client:x11-client" \
@@ -127,32 +84,14 @@ jobs:
         cp -r src/flutter/shell/platform/common/client_wrapper common/
         cp -r src/flutter/shell/platform/common/public/* common/
         cp -r src/flutter/shell/platform/linux_embedded/public/* common/
-        cp engine-elinux-x64-release/icudtl.dat common/icu/ 2>/dev/null || true
+        cp engine-elinux-arm64-release/icudtl.dat common/icu/ 2>/dev/null || true
         (cd common && zip -r ../artifacts/elinux-common.zip *)
 
-        # elinux-x64-release.zip: engine + all embedder .so + gen_snapshot
-        mkdir -p x64-rel/linux-x64
-        cp engine-elinux-x64-release/libflutter_engine.so x64-rel/
-        cp engine-elinux-x64-release/linux-x64/gen_snapshot x64-rel/linux-x64/ 2>/dev/null || true
-        cp build/x64-rel-wayland/libflutter_elinux_wayland.so x64-rel/
-        cp build/x64-rel-x11/libflutter_elinux_x11.so x64-rel/
-        cp build/x64-rel-gbm/libflutter_elinux_gbm.so x64-rel/
-        cp build/x64-rel-eglstream/libflutter_elinux_eglstream.so x64-rel/
-        (cd x64-rel && zip -r ../artifacts/elinux-x64-release.zip *)
-
-        # elinux-x64-debug.zip: engine + all embedder .so (debug)
-        mkdir -p x64-dbg
-        cp engine-elinux-x64-debug/libflutter_engine.so x64-dbg/
-        cp build/x64-dbg-wayland/libflutter_elinux_wayland.so x64-dbg/
-        cp build/x64-dbg-x11/libflutter_elinux_x11.so x64-dbg/
-        cp build/x64-dbg-gbm/libflutter_elinux_gbm.so x64-dbg/
-        cp build/x64-dbg-eglstream/libflutter_elinux_eglstream.so x64-dbg/
-        (cd x64-dbg && zip -r ../artifacts/elinux-x64-debug.zip *)
-
         # elinux-arm64-release.zip: engine + all embedder .so + gen_snapshot
-        mkdir -p arm64-rel/linux-x64
+        mkdir -p arm64-rel/linux-arm64
         cp engine-elinux-arm64-release/libflutter_engine.so arm64-rel/
-        cp engine-elinux-arm64-release/linux-x64/gen_snapshot arm64-rel/linux-x64/ 2>/dev/null || true
+        cp engine-elinux-arm64-release/linux-arm64/gen_snapshot arm64-rel/linux-arm64/ 2>/dev/null || \
+        cp engine-elinux-arm64-release/linux-x64/gen_snapshot arm64-rel/linux-arm64/ 2>/dev/null || true
         cp build/arm64-rel-wayland/libflutter_elinux_wayland.so arm64-rel/
         cp build/arm64-rel-x11/libflutter_elinux_x11.so arm64-rel/
         cp build/arm64-rel-gbm/libflutter_elinux_gbm.so arm64-rel/
@@ -168,13 +107,13 @@ jobs:
         cp build/arm64-dbg-eglstream/libflutter_elinux_eglstream.so arm64-dbg/
         (cd arm64-dbg && zip -r ../artifacts/elinux-arm64-debug.zip *)
 
-        # elinux-x64-clients.zip: example executables
+        # elinux-arm64-clients.zip: example executables
         mkdir -p clients
         cp build/wayland-client/flutter-client clients/ 2>/dev/null || true
         cp build/x11-client/flutter-x11 clients/ 2>/dev/null || true
         cp build/drm-gbm-client/flutter-drm-gbm-backend clients/ 2>/dev/null || true
         cp build/drm-eglstream-client/flutter-drm-eglstream-backend clients/ 2>/dev/null || true
-        (cd clients && zip -r ../artifacts/elinux-x64-clients.zip *)
+        (cd clients && zip -r ../artifacts/elinux-arm64-clients.zip *)
 
         ls -lh artifacts/
 
