@@ -9,7 +9,7 @@ env:
   BUILD_TYPE: Release
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,60 +17,85 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install libraries
+    - name: Install build dependencies
       run: |
-        sudo apt update
-        sudo apt install libgles2-mesa-dev libegl1-mesa-dev libxkbcommon-dev libwayland-dev libdrm-dev libgbm-dev libinput-dev libudev-dev libsystemd-dev wayland-protocols libx11-dev
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential clang cmake curl git pkgconf zip \
+          libgles2-mesa-dev libegl1-mesa-dev libxkbcommon-dev libwayland-dev \
+          libdrm-dev libgbm-dev libinput-dev libudev-dev libsystemd-dev \
+          wayland-protocols libx11-dev
 
-    - name: Download Flutter Engine library
+    - name: Download Flutter Engine (pre-built release)
       run: |
         curl -L https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download/elinux-x64-release.zip > elinux-x64-release.zip
-        unzip elinux-x64-release.zip
+        unzip elinux-x64-release.zip -d engine
+        ls -lh engine/
 
-    - name: Build wayland client
+    - name: Build embedder .so for all backends (release mode)
       run: |
-        cmake -E make_directory build/wayland
-        cp libflutter_engine.so build/wayland/
-        cmake -S . -B build/wayland -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-wayland-client
-        cmake --build build/wayland --config $BUILD_TYPE
+        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
+          BT="${backend%%:*}"
+          DIR="${backend##*:}"
+          cmake -S . -B build/so-${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DBUILD_ELINUX_SO=ON \
+            -DBACKEND_TYPE=${BT} \
+            -DFLUTTER_RELEASE=ON
+          cp engine/libflutter_engine.so build/so-${DIR}/
+          cmake --build build/so-${DIR} --config ${BUILD_TYPE}
+        done
 
-    - name: Build drm backend with GBM
+    - name: Build example clients
       run: |
-        cmake -E make_directory build/drm-gbm
-        cp libflutter_engine.so build/drm-gbm/
-        cmake -S . -B build/drm-gbm -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-drm-gbm-backend
-        cmake --build build/drm-gbm --config $BUILD_TYPE
+        for example in \
+          "flutter-wayland-client:wayland-client" \
+          "flutter-x11-client:x11-client" \
+          "flutter-drm-gbm-backend:drm-gbm-client" \
+          "flutter-drm-eglstream-backend:drm-eglstream-client"; do
+          PROJ="${example%%:*}"
+          DIR="${example##*:}"
+          cmake -S . -B build/${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DUSER_PROJECT_PATH=examples/${PROJ}
+          cp engine/libflutter_engine.so build/${DIR}/
+          cmake --build build/${DIR} --config ${BUILD_TYPE}
+        done
 
-    - name: Build drm backend with EGLStream
-      run: |
-        cmake -E make_directory build/drm-eglstream
-        cp libflutter_engine.so build/drm-eglstream/
-        cmake -S . -B build/drm-eglstream -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-drm-eglstream-backend
-        cmake --build build/drm-eglstream --config $BUILD_TYPE
-
-    - name: Build x11 client
-      run: |
-        cmake -E make_directory build/x11
-        cp libflutter_engine.so build/x11/
-        cmake -S . -B build/x11 -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DUSER_PROJECT_PATH=examples/flutter-x11-client
-        cmake --build build/x11 --config $BUILD_TYPE
-
-    - name: Build libflutter_elinux.so
-      run: |
-        cmake -E make_directory build/elinux-so
-        cp libflutter_engine.so build/elinux-so/
-        cmake -S . -B build/elinux-so -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DBUILD_ELINUX_SO=ON -DBACKEND_TYPE=WAYLAND
-        cmake --build build/elinux-so --config $BUILD_TYPE
-
-    - name: Collect artifacts
+    - name: Package artifacts
       run: |
         mkdir -p artifacts
-        cp build/wayland/flutter-client artifacts/
-        cp build/drm-gbm/flutter-drm-gbm-backend artifacts/
-        cp build/drm-eglstream/flutter-drm-eglstream-backend artifacts/
-        cp build/x11/flutter-x11 artifacts/
-        cp build/elinux-so/libflutter_elinux_wayland.so artifacts/
-        cp libflutter_engine.so artifacts/
+
+        # elinux-common.zip: client_wrapper + public headers + icu data
+        # (follows release/build-flutter-embedder.sh + package-flutter-engine.sh structure)
+        mkdir -p common/icu
+        cp -r src/client_wrapper common/
+        mv common/client_wrapper common/cpp_client_wrapper
+        cp -r src/flutter/shell/platform/common/client_wrapper common/
+        cp -r src/flutter/shell/platform/common/public/* common/
+        cp -r src/flutter/shell/platform/linux_embedded/public/* common/
+        cp engine/icudtl.dat common/icu/ 2>/dev/null || true
+        (cd common && zip -r ../artifacts/elinux-common.zip *)
+
+        # elinux-x64-release.zip: engine + all embedder .so + gen_snapshot
+        # (follows release/package-flutter-engine.sh release mode structure)
+        mkdir -p x64-release/linux-x64
+        cp engine/libflutter_engine.so x64-release/
+        cp engine/linux-x64/gen_snapshot x64-release/linux-x64/ 2>/dev/null || true
+        cp build/so-wayland/libflutter_elinux_wayland.so x64-release/
+        cp build/so-x11/libflutter_elinux_x11.so x64-release/
+        cp build/so-gbm/libflutter_elinux_gbm.so x64-release/
+        cp build/so-eglstream/libflutter_elinux_eglstream.so x64-release/
+        (cd x64-release && zip -r ../artifacts/elinux-x64-release.zip *)
+
+        # elinux-x64-clients.zip: example executables
+        mkdir -p clients
+        cp build/wayland-client/flutter-client clients/ 2>/dev/null || true
+        cp build/x11-client/flutter-x11 clients/ 2>/dev/null || true
+        cp build/drm-gbm-client/flutter-drm-gbm-backend clients/ 2>/dev/null || true
+        cp build/drm-eglstream-client/flutter-drm-eglstream-backend clients/ 2>/dev/null || true
+        (cd clients && zip -r ../artifacts/elinux-x64-clients.zip *)
+
         ls -lh artifacts/
 
     - name: Upload build artifacts
