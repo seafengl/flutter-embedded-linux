@@ -90,3 +90,23 @@ jobs:
       working-directory: ${{github.workspace}}/build
       shell: bash
       run: cmake --build . --config $BUILD_TYPE
+
+    - name: Collect artifacts
+      shell: bash
+      working-directory: ${{github.workspace}}/build
+      run: |
+        mkdir -p artifacts
+        cp flutter-client artifacts/ 2>/dev/null || true
+        cp flutter-drm-gbm-backend artifacts/ 2>/dev/null || true
+        cp flutter-drm-eglstream-backend artifacts/ 2>/dev/null || true
+        cp flutter-x11 artifacts/ 2>/dev/null || true
+        cp libflutter_elinux_wayland.so artifacts/ 2>/dev/null || true
+        cp libflutter_engine.so artifacts/ 2>/dev/null || true
+        ls -lh artifacts/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: elinux-build-${{ github.sha }}
+        path: ${{ github.workspace }}/build/artifacts/
+        retention-days: 30
