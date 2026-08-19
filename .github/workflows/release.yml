@@ -17,49 +17,89 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install build dependencies
+    - name: Install build dependencies (x64 + arm64 cross)
       run: |
+        sudo dpkg --add-architecture arm64
         sudo apt-get update
         sudo apt-get install -y \
           build-essential clang cmake curl git pkgconf zip \
           libgles2-mesa-dev libegl1-mesa-dev libxkbcommon-dev libwayland-dev \
           libdrm-dev libgbm-dev libinput-dev libudev-dev libsystemd-dev \
-          wayland-protocols libx11-dev
+          wayland-protocols libx11-dev \
+          crossbuild-essential-arm64 \
+          libgles2-mesa-dev:arm64 libegl1-mesa-dev:arm64 libxkbcommon-dev:arm64 \
+          libwayland-dev:arm64 libdrm-dev:arm64 libgbm-dev:arm64 libinput-dev:arm64 \
+          libudev-dev:arm64 libsystemd-dev:arm64 wayland-protocols:arm64
 
-    - name: Download Flutter Engine (pre-built release)
+    - name: Download Flutter Engine (x64 + arm64, debug + release)
       run: |
-        curl -L https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download/elinux-x64-release.zip > elinux-x64-release.zip
-        unzip elinux-x64-release.zip -d engine
-        # CMake expects libflutter_engine.so at ${CMAKE_CURRENT_SOURCE_DIR}/build/
+        BASE_URL=https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download
+        for pkg in elinux-x64-release elinux-x64-debug elinux-arm64-release elinux-arm64-debug; do
+          curl -L ${BASE_URL}/${pkg}.zip > ${pkg}.zip
+          unzip ${pkg}.zip -d engine-${pkg}
+        done
         mkdir -p build
-        cp engine/libflutter_engine.so build/
-        ls -lh engine/
+        ls -lh engine-*/
 
-    - name: Build embedder .so for all backends (release mode)
+    - name: Build x64 embedder .so (release mode)
       run: |
+        cp engine-elinux-x64-release/libflutter_engine.so build/
         for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
-          BT="${backend%%:*}"
-          DIR="${backend##*:}"
-          cmake -S . -B build/so-${DIR} \
-            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-            -DBUILD_ELINUX_SO=ON \
-            -DBACKEND_TYPE=${BT} \
-            -DFLUTTER_RELEASE=ON
-          cmake --build build/so-${DIR} --config ${BUILD_TYPE}
+          BT="${backend%%:*}"; DIR="${backend##*:}"
+          cmake -S . -B build/x64-rel-${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=ON -DENABLE_ELINUX_EMBEDDER_LOG=OFF
+          cmake --build build/x64-rel-${DIR} --config ${BUILD_TYPE}
         done
 
-    - name: Build example clients
+    - name: Build x64 embedder .so (debug mode)
       run: |
+        cp engine-elinux-x64-debug/libflutter_engine.so build/
+        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
+          BT="${backend%%:*}"; DIR="${backend##*:}"
+          cmake -S . -B build/x64-dbg-${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=OFF -DENABLE_ELINUX_EMBEDDER_LOG=ON
+          cmake --build build/x64-dbg-${DIR} --config ${BUILD_TYPE}
+        done
+
+    - name: Build arm64 embedder .so (release mode)
+      run: |
+        cp engine-elinux-arm64-release/libflutter_engine.so build/
+        TOOLCHAIN=${{ github.workspace }}/release/cross-toolchain-aarch64.cmake
+        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
+          BT="${backend%%:*}"; DIR="${backend##*:}"
+          cmake -S . -B build/arm64-rel-${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=ON -DENABLE_ELINUX_EMBEDDER_LOG=OFF \
+            -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}
+          cmake --build build/arm64-rel-${DIR} --config ${BUILD_TYPE}
+        done
+
+    - name: Build arm64 embedder .so (debug mode)
+      run: |
+        cp engine-elinux-arm64-debug/libflutter_engine.so build/
+        TOOLCHAIN=${{ github.workspace }}/release/cross-toolchain-aarch64.cmake
+        for backend in "WAYLAND:wayland" "X11:x11" "DRM-GBM:gbm" "DRM-EGLSTREAM:eglstream"; do
+          BT="${backend%%:*}"; DIR="${backend##*:}"
+          cmake -S . -B build/arm64-dbg-${DIR} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_ELINUX_SO=ON \
+            -DBACKEND_TYPE=${BT} -DFLUTTER_RELEASE=OFF -DENABLE_ELINUX_EMBEDDER_LOG=ON \
+            -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}
+          cmake --build build/arm64-dbg-${DIR} --config ${BUILD_TYPE}
+        done
+
+    - name: Build example clients (x64)
+      run: |
+        cp engine-elinux-x64-release/libflutter_engine.so build/
         for example in \
           "flutter-wayland-client:wayland-client" \
           "flutter-x11-client:x11-client" \
           "flutter-drm-gbm-backend:drm-gbm-client" \
           "flutter-drm-eglstream-backend:drm-eglstream-client"; do
-          PROJ="${example%%:*}"
-          DIR="${example##*:}"
+          PROJ="${example%%:*}"; DIR="${example##*:}"
           cmake -S . -B build/${DIR} \
-            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-            -DUSER_PROJECT_PATH=examples/${PROJ}
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSER_PROJECT_PATH=examples/${PROJ}
           cmake --build build/${DIR} --config ${BUILD_TYPE}
         done
 
@@ -68,26 +108,52 @@ jobs:
         mkdir -p artifacts
 
         # elinux-common.zip: client_wrapper + public headers + icu data
-        # (follows release/build-flutter-embedder.sh + package-flutter-engine.sh structure)
         mkdir -p common/icu
         cp -r src/client_wrapper common/
         mv common/client_wrapper common/cpp_client_wrapper
         cp -r src/flutter/shell/platform/common/client_wrapper common/
         cp -r src/flutter/shell/platform/common/public/* common/
         cp -r src/flutter/shell/platform/linux_embedded/public/* common/
-        cp engine/icudtl.dat common/icu/ 2>/dev/null || true
+        cp engine-elinux-x64-release/icudtl.dat common/icu/ 2>/dev/null || true
         (cd common && zip -r ../artifacts/elinux-common.zip *)
 
         # elinux-x64-release.zip: engine + all embedder .so + gen_snapshot
-        # (follows release/package-flutter-engine.sh release mode structure)
-        mkdir -p x64-release/linux-x64
-        cp engine/libflutter_engine.so x64-release/
-        cp engine/linux-x64/gen_snapshot x64-release/linux-x64/ 2>/dev/null || true
-        cp build/so-wayland/libflutter_elinux_wayland.so x64-release/
-        cp build/so-x11/libflutter_elinux_x11.so x64-release/
-        cp build/so-gbm/libflutter_elinux_gbm.so x64-release/
-        cp build/so-eglstream/libflutter_elinux_eglstream.so x64-release/
-        (cd x64-release && zip -r ../artifacts/elinux-x64-release.zip *)
+        mkdir -p x64-rel/linux-x64
+        cp engine-elinux-x64-release/libflutter_engine.so x64-rel/
+        cp engine-elinux-x64-release/linux-x64/gen_snapshot x64-rel/linux-x64/ 2>/dev/null || true
+        cp build/x64-rel-wayland/libflutter_elinux_wayland.so x64-rel/
+        cp build/x64-rel-x11/libflutter_elinux_x11.so x64-rel/
+        cp build/x64-rel-gbm/libflutter_elinux_gbm.so x64-rel/
+        cp build/x64-rel-eglstream/libflutter_elinux_eglstream.so x64-rel/
+        (cd x64-rel && zip -r ../artifacts/elinux-x64-release.zip *)
+
+        # elinux-x64-debug.zip: engine + all embedder .so (debug)
+        mkdir -p x64-dbg
+        cp engine-elinux-x64-debug/libflutter_engine.so x64-dbg/
+        cp build/x64-dbg-wayland/libflutter_elinux_wayland.so x64-dbg/
+        cp build/x64-dbg-x11/libflutter_elinux_x11.so x64-dbg/
+        cp build/x64-dbg-gbm/libflutter_elinux_gbm.so x64-dbg/
+        cp build/x64-dbg-eglstream/libflutter_elinux_eglstream.so x64-dbg/
+        (cd x64-dbg && zip -r ../artifacts/elinux-x64-debug.zip *)
+
+        # elinux-arm64-release.zip: engine + all embedder .so + gen_snapshot
+        mkdir -p arm64-rel/linux-x64
+        cp engine-elinux-arm64-release/libflutter_engine.so arm64-rel/
+        cp engine-elinux-arm64-release/linux-x64/gen_snapshot arm64-rel/linux-x64/ 2>/dev/null || true
+        cp build/arm64-rel-wayland/libflutter_elinux_wayland.so arm64-rel/
+        cp build/arm64-rel-x11/libflutter_elinux_x11.so arm64-rel/
+        cp build/arm64-rel-gbm/libflutter_elinux_gbm.so arm64-rel/
+        cp build/arm64-rel-eglstream/libflutter_elinux_eglstream.so arm64-rel/
+        (cd arm64-rel && zip -r ../artifacts/elinux-arm64-release.zip *)
+
+        # elinux-arm64-debug.zip: engine + all embedder .so (debug)
+        mkdir -p arm64-dbg
+        cp engine-elinux-arm64-debug/libflutter_engine.so arm64-dbg/
+        cp build/arm64-dbg-wayland/libflutter_elinux_wayland.so arm64-dbg/
+        cp build/arm64-dbg-x11/libflutter_elinux_x11.so arm64-dbg/
+        cp build/arm64-dbg-gbm/libflutter_elinux_gbm.so arm64-dbg/
+        cp build/arm64-dbg-eglstream/libflutter_elinux_eglstream.so arm64-dbg/
+        (cd arm64-dbg && zip -r ../artifacts/elinux-arm64-debug.zip *)
 
         # elinux-x64-clients.zip: example executables
         mkdir -p clients
