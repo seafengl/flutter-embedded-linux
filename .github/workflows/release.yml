@@ -30,6 +30,9 @@ jobs:
       run: |
         curl -L https://github.com/flutter-elinux/flutter-embedded-linux/releases/latest/download/elinux-x64-release.zip > elinux-x64-release.zip
         unzip elinux-x64-release.zip -d engine
+        # CMake expects libflutter_engine.so at ${CMAKE_CURRENT_SOURCE_DIR}/build/
+        mkdir -p build
+        cp engine/libflutter_engine.so build/
         ls -lh engine/
 
     - name: Build embedder .so for all backends (release mode)
@@ -42,7 +45,6 @@ jobs:
             -DBUILD_ELINUX_SO=ON \
             -DBACKEND_TYPE=${BT} \
             -DFLUTTER_RELEASE=ON
-          cp engine/libflutter_engine.so build/so-${DIR}/
           cmake --build build/so-${DIR} --config ${BUILD_TYPE}
         done
 
@@ -58,7 +60,6 @@ jobs:
           cmake -S . -B build/${DIR} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
             -DUSER_PROJECT_PATH=examples/${PROJ}
-          cp engine/libflutter_engine.so build/${DIR}/
           cmake --build build/${DIR} --config ${BUILD_TYPE}
         done
 
